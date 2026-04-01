@@ -1,26 +1,169 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Plus, Printer, Trash2, Layout, 
-  GripVertical, FileText, Menu, X, Layers3, Settings2, RotateCcw, Box, Folder, Image as ImageIcon, CheckCircle2, EyeOff, Eye, AlertTriangle, MoveHorizontal
+  GripVertical, FileText, Menu, X, Layers3, Settings2, RotateCcw, Box, Folder, CheckCircle2, EyeOff, Eye, MoveHorizontal
 } from 'lucide-react';
 
+// --- TIPOS ---
+interface Project {
+  event: string;
+  client: string;
+  agency?: string;
+}
+
+interface ItemBase {
+  id: string;
+  name: string;
+  type: 'Painel' | 'Balcão';
+  material: string;
+  bleedX: number;
+  bleedY: number;
+  visibleWidth: number;
+  visibleHeight: number;
+  totalWidth: number;
+  totalHeight: number;
+}
+
+interface PainelItem extends ItemBase {
+  type: 'Painel';
+  width: number;
+  height: number;
+}
+
+interface BalcaoItem extends ItemBase {
+  type: 'Balcão';
+  frontWidth: number;
+  sideWidth: number;
+  height: number;
+}
+
+type Item = PainelItem | BalcaoItem;
+
+interface Space {
+  id: string;
+  name: string;
+  items: Item[];
+}
+
+interface FormData {
+  name: string;
+  type: 'Painel' | 'Balcão';
+  material: string;
+  isCustomBleed: boolean;
+  customBx: string;
+  customBy: string;
+  w: string;
+  h: string;
+  f: string;
+  s: string;
+}
+
+interface BleedSettings {
+  x: number;
+  y: number;
+}
+
+interface ScaleResult {
+  drawW: number;
+  drawH: number;
+  scale: number;
+}
+
+interface PageWrapperProps {
+  children: React.ReactNode;
+  isDark?: boolean;
+}
+
+interface CADShapeProps {
+  width: string | number;
+  height: string | number;
+  wLabel: string;
+  hLabel: string;
+  isDark: boolean;
+  children: React.ReactNode;
+}
+
+interface PrintHeaderProps {
+  project: Project;
+  title: string;
+  isDark?: boolean;
+}
+
+interface PrintFooterProps {
+  sheetNumber: number;
+  totalSheets: number;
+  isDark?: boolean;
+  isWhiteLabel: boolean;
+}
+
+interface IntroSheetProps {
+  project: Project;
+  sheetNumber: number;
+  totalSheets: number;
+  isWhiteLabel: boolean;
+}
+
+interface SubmissionRulesPageProps {
+  project: Project;
+  sheetNumber: number;
+  totalSheets: number;
+  isWhiteLabel: boolean;
+}
+
+interface AnatomyPageProps {
+  project: Project;
+  sheetNumber: number;
+  totalSheets: number;
+  isWhiteLabel: boolean;
+}
+
+interface SectorCoverPageProps {
+  project: Project;
+  space: Space;
+  sheetNumber: number;
+  totalSheets: number;
+  isWhiteLabel: boolean;
+}
+
+interface PieceBalcaoDetailPageProps {
+  project: Project;
+  space: Space;
+  item: BalcaoItem;
+  sheetNumber: number;
+  totalSheets: number;
+  isWhiteLabel: boolean;
+}
+
+interface ClosingPageProps {
+  project: Project;
+  sheetNumber: number;
+  totalSheets: number;
+  isWhiteLabel: boolean;
+}
+
+interface PrintQueueItem {
+  type: 'intro' | 'anatomy' | 'rules' | 'sector_cover' | 'piece' | 'piece_balcao_detail' | 'closing';
+  space?: Space;
+  item?: Item;
+}
+
 // --- MOTORES DE PRECISÃO ---
-const parseMeasure = (v) => {
+const parseMeasure = (v: string | number | undefined): number => {
   if (!v) return 0;
   const p = parseFloat(String(v).replace(',', '.'));
   return isNaN(p) ? 0 : Math.max(0, p);
 };
 
-const formatM = (v) => {
-  const n = parseFloat(v);
+const formatM = (v: number): string => {
+  const n = parseFloat(v.toString());
   return isNaN(n) ? '0,00' : n.toFixed(2).replace('.', ',');
 };
 
-const getBleedSettings = (material, isCustom, customX, customY) => {
+const getBleedSettings = (material: string, isCustom: boolean, customX: string, customY: string): BleedSettings => {
   if (isCustom) {
     return { x: parseMeasure(customX), y: parseMeasure(customY) };
   }
-  const rules = {
+  const rules: Record<string, BleedSettings> = {
     'Lona para Q15 (Ilhós)': { x: 0.35, y: 0.25 },
     'Lona para Metalon': { x: 0.10, y: 0.10 },
     'Trainel (Madeira)': { x: 0.15, y: 0.15 },
@@ -29,16 +172,16 @@ const getBleedSettings = (material, isCustom, customX, customY) => {
   return rules[material] || { x: 0.05, y: 0.05 };
 };
 
-const calculateScalePrint = (width, height, maxW = 200, maxH = 120) => {
-  const numW = Math.max(parseFloat(width) || 0.001, 0.001);
-  const numH = Math.max(parseFloat(height) || 0.001, 0.001);
+const calculateScalePrint = (width: number, height: number, maxW: number = 200, maxH: number = 120): ScaleResult => {
+  const numW = Math.max(parseFloat(width.toString()) || 0.001, 0.001);
+  const numH = Math.max(parseFloat(height.toString()) || 0.001, 0.001);
   const scale = Math.min(maxW / numW, maxH / numH);
   return { drawW: numW * scale, drawH: numH * scale, scale: scale };
 };
 
 // --- COMPONENTES VISUAIS E WRAPPERS (MOBILE SAFE) ---
 
-const PageWrapper = ({ children, isDark = false }) => (
+const PageWrapper: React.FC<PageWrapperProps> = ({ children, isDark = false }) => (
   <div className="w-full overflow-x-auto print:overflow-visible pb-8 mb-8 print:pb-0 print:mb-0 flex justify-start xl:justify-center px-4 xl:px-0">
     <div className={`w-[297mm] min-w-[297mm] h-[210mm] print:w-full print:h-screen shrink-0 overflow-hidden flex flex-col break-after-page p-12 sm:p-16 relative shadow-[0_15px_50px_rgba(0,0,0,0.08)] print:shadow-none rounded-[24px] sm:rounded-[40px] print:rounded-none print:bg-white ${isDark ? 'bg-[#121211] text-white' : 'bg-white text-[#121211]'}`}>
       {children}
@@ -46,7 +189,7 @@ const PageWrapper = ({ children, isDark = false }) => (
   </div>
 );
 
-const CADShape = ({ width, height, wLabel, hLabel, isDark, children }) => {
+const CADShape: React.FC<CADShapeProps> = ({ width, height, wLabel, hLabel, isDark, children }) => {
   const lineClass = isDark ? "bg-white/40" : "bg-[#121211]/30";
   const textClass = isDark ? "text-white" : "text-[#121211]";
 
@@ -82,7 +225,7 @@ const CADShape = ({ width, height, wLabel, hLabel, isDark, children }) => {
   );
 };
 
-const PrintHeader = ({ project, title, isDark = false }) => (
+const PrintHeader: React.FC<PrintHeaderProps> = ({ project, title, isDark = false }) => (
   <div className={`w-full flex justify-between items-end border-b pb-5 mb-10 ${isDark ? 'border-white/10' : 'border-[#E8ECEF]'}`}>
     <div>
       <h1 className={`text-xl font-extrabold uppercase tracking-tight ${isDark ? 'text-white' : 'text-[#121211]'}`}>{project.event || 'PROJETO SEM NOME'}</h1>
@@ -95,7 +238,7 @@ const PrintHeader = ({ project, title, isDark = false }) => (
   </div>
 );
 
-const PrintFooter = ({ sheetNumber, totalSheets, isDark = false, isWhiteLabel = false }) => (
+const PrintFooter: React.FC<PrintFooterProps> = ({ sheetNumber, totalSheets, isDark = false, isWhiteLabel = false }) => (
   <div className={`w-full flex justify-between items-center mt-auto pt-5 border-t text-[9px] font-bold uppercase tracking-widest ${isDark ? 'border-white/10 text-white/50' : 'border-[#E8ECEF] text-[#8A94A6]'}`}>
     <div>{isWhiteLabel ? 'DIRETRIZES TÉCNICAS DE CENOGRAFIA' : 'INTER PRODUÇÕES • DIRETRIZES TÉCNICAS'}</div>
     <div>PÁGINA {sheetNumber} DE {totalSheets}</div>
@@ -104,7 +247,7 @@ const PrintFooter = ({ sheetNumber, totalSheets, isDark = false, isWhiteLabel = 
 
 // --- PÁGINAS DO PDF ---
 
-const IntroSheet = ({ project, sheetNumber, totalSheets, isWhiteLabel }) => (
+const IntroSheet: React.FC<IntroSheetProps> = ({ project, sheetNumber, totalSheets, isWhiteLabel }) => (
   <PageWrapper>
     <div className="flex-1 flex flex-col justify-center max-w-4xl pt-10">
       <div className="w-14 h-14 bg-[#F4F5F7] rounded-2xl mb-8 flex items-center justify-center">
@@ -130,7 +273,7 @@ const IntroSheet = ({ project, sheetNumber, totalSheets, isWhiteLabel }) => (
   </PageWrapper>
 );
 
-const AnatomyPage = ({ project, sheetNumber, totalSheets, isWhiteLabel }) => (
+const AnatomyPage: React.FC<AnatomyPageProps> = ({ project, sheetNumber, totalSheets, isWhiteLabel }) => (
   <PageWrapper>
     <PrintHeader project={project} title="Anatomia do Gabarito" />
     <div className="flex-1 flex flex-col justify-center">
@@ -169,7 +312,7 @@ const AnatomyPage = ({ project, sheetNumber, totalSheets, isWhiteLabel }) => (
   </PageWrapper>
 );
 
-const SubmissionRulesPage = ({ project, sheetNumber, totalSheets, isWhiteLabel }) => (
+const SubmissionRulesPage: React.FC<SubmissionRulesPageProps> = ({ project, sheetNumber, totalSheets, isWhiteLabel }) => (
   <PageWrapper>
     <PrintHeader project={project} title="Regras Técnicas de Produção" />
     <div className="flex-1 flex flex-col justify-center py-2">
@@ -259,7 +402,7 @@ const SubmissionRulesPage = ({ project, sheetNumber, totalSheets, isWhiteLabel }
   </PageWrapper>
 );
 
-const SectorCoverPage = ({ project, space, sheetNumber, totalSheets, isWhiteLabel }) => (
+const SectorCoverPage: React.FC<SectorCoverPageProps> = ({ project, space, sheetNumber, totalSheets, isWhiteLabel }) => (
   <PageWrapper isDark={true}>
     <PrintHeader project={project} title="Divisão de Setor" isDark={true} />
     <div className="flex-1 flex flex-col items-center justify-center text-center">
@@ -281,11 +424,11 @@ const SectorCoverPage = ({ project, space, sheetNumber, totalSheets, isWhiteLabe
   </PageWrapper>
 );
 
-const PieceBalcaoDetailPage = ({ project, space, item, sheetNumber, totalSheets, isWhiteLabel }) => {
-  const tWidth = item.totalWidth || item.width || 0.001;
-  const tHeight = item.totalHeight || item.height || 0.001;
+const PieceBalcaoDetailPage: React.FC<PieceBalcaoDetailPageProps> = ({ project, space, item, sheetNumber, totalSheets, isWhiteLabel }) => {
+  const tWidth = item.totalWidth || 0.001;
+  const tHeight = item.totalHeight || 0.001;
   const vWidth = item.visibleWidth || 0.001;
-  const vHeight = item.visibleHeight || item.height || 0.001;
+  const vHeight = item.visibleHeight || 0.001;
 
   const { scale } = calculateScalePrint(tWidth, tHeight, 550, 200);
   
@@ -369,7 +512,7 @@ const PieceBalcaoDetailPage = ({ project, space, item, sheetNumber, totalSheets,
   );
 };
 
-const ClosingPage = ({ project, sheetNumber, totalSheets, isWhiteLabel }) => (
+const ClosingPage: React.FC<ClosingPageProps> = ({ project, sheetNumber, totalSheets, isWhiteLabel }) => (
   <PageWrapper isDark={true}>
     <PrintHeader project={project} title="Fim do Documento" isDark={true} />
     <div className="flex-1 flex flex-col items-center justify-center text-center max-w-3xl mx-auto">
@@ -390,18 +533,18 @@ const ClosingPage = ({ project, sheetNumber, totalSheets, isWhiteLabel }) => (
 // --- APP PRINCIPAL ---
 
 export default function App() {
-  const [step, setStep] = useState('setup');
-  const [project, setProject] = useState({ event: '', client: '', agency: '' });
-  const [spaces, setSpaces] = useState([{ id: 's1', name: 'SEÇÃO PRINCIPAL', items: [] }]);
-  const [activeSpaceId, setActiveSpaceId] = useState('s1');
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isWhiteLabel, setIsWhiteLabel] = useState(false);
-  const [showPrintHint, setShowPrintHint] = useState(false); // NOVO: Controle do aviso de PDF
+  const [step, setStep] = useState<'setup' | 'editor' | 'preview'>('setup');
+  const [project, setProject] = useState<Project>({ event: '', client: '', agency: '' });
+  const [spaces, setSpaces] = useState<Space[]>([{ id: 's1', name: 'SEÇÃO PRINCIPAL', items: [] }]);
+  const [activeSpaceId, setActiveSpaceId] = useState<string>('s1');
+  const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
+  const [isWhiteLabel, setIsWhiteLabel] = useState<boolean>(false);
+  const [showPrintHint, setShowPrintHint] = useState<boolean>(false); // NOVO: Controle do aviso de PDF
   
-  const [draggedSpaceIdx, setDraggedSpaceIdx] = useState(null);
-  const [draggedItemIdx, setDraggedItemIdx] = useState(null);
+  const [draggedSpaceIdx, setDraggedSpaceIdx] = useState<number | null>(null);
+  const [draggedItemIdx, setDraggedItemIdx] = useState<number | null>(null);
 
-  const [form, setForm] = useState({ 
+  const [form, setForm] = useState<FormData>({ 
     name: '', 
     type: 'Painel', 
     material: 'Trainel (Madeira)', 
@@ -413,8 +556,8 @@ export default function App() {
 
   const activeSpace = useMemo(() => spaces.find(s => s.id === activeSpaceId), [spaces, activeSpaceId]);
 
-  const printQueue = useMemo(() => {
-    const queue = [];
+  const printQueue = useMemo((): PrintQueueItem[] => {
+    const queue: PrintQueueItem[] = [];
     queue.push({ type: 'intro' });
     queue.push({ type: 'anatomy' });
     queue.push({ type: 'rules' });
@@ -438,7 +581,7 @@ export default function App() {
   const totalSheetsCount = printQueue.length;
 
   // NOVO MOTOR DE EXPORTAÇÃO SEGURO (MANTÉM VETORES)
-  const handleExportPDF = () => {
+  const handleExportPDF = (): void => {
     // 1. Mostra o alerta ensinando o usuário
     setShowPrintHint(true);
     
@@ -457,7 +600,7 @@ export default function App() {
     }, 2500); 
   };
   
-  const onDropSpace = (e, dropIdx) => {
+  const onDropSpace = (e: React.DragEvent, dropIdx: number): void => {
     e.preventDefault();
     if (draggedSpaceIdx === null || draggedSpaceIdx === dropIdx) return;
     const newSpaces = [...spaces];
@@ -466,10 +609,11 @@ export default function App() {
     setSpaces(newSpaces); setDraggedSpaceIdx(null);
   };
 
-  const onDropItem = (e, dropIdx) => {
+  const onDropItem = (e: React.DragEvent, dropIdx: number): void => {
     e.preventDefault();
     if (draggedItemIdx === null || draggedItemIdx === dropIdx) return;
     const activeSpaceObj = spaces.find(s => s.id === activeSpaceId);
+    if (!activeSpaceObj) return;
     const newItems = [...activeSpaceObj.items];
     const [removed] = newItems.splice(draggedItemIdx, 1);
     newItems.splice(dropIdx, 0, removed);
@@ -477,38 +621,36 @@ export default function App() {
     setDraggedItemIdx(null);
   };
 
-  const handleUpdateSpaceName = (id, newName) => setSpaces(prev => prev.map(s => s.id === id ? { ...s, name: newName } : s));
-  const handleAddSpace = () => {
+  const handleUpdateSpaceName = (id: string, newName: string): void => setSpaces(prev => prev.map(s => s.id === id ? { ...s, name: newName } : s));
+  const handleAddSpace = (): void => {
     const newId = `s-${Date.now()}`;
     setSpaces(prev => [...prev, { id: newId, name: 'Nova Seção', items: [] }]);
     setActiveSpaceId(newId);
   };
-  const handleDeleteSpace = (id) => {
+  const handleDeleteSpace = (id: string): void => {
     if (spaces.length <= 1) return;
     const newSpaces = spaces.filter(s => s.id !== id);
     setSpaces(newSpaces);
     setActiveSpaceId(newSpaces[0].id);
   };
 
-  const handleAddItem = (e) => {
+  const handleAddItem = (e: React.FormEvent): void => {
     e.preventDefault();
     if (!form.name) return;
     const bleed = getBleedSettings(form.material, form.isCustomBleed, form.customBx, form.customBy);
     let materialName = form.isCustomBleed ? 'Sangria Especial' : form.material;
     
-    let newItem = { 
-      id: Date.now().toString(), 
-      name: form.name, 
-      type: form.type, 
-      material: materialName, 
-      bleedX: bleed.x, 
-      bleedY: bleed.y 
-    };
+    let newItem: Item;
     
     if (form.type === 'Painel') {
       const vW = parseMeasure(form.w), vH = parseMeasure(form.h);
       newItem = { 
-        ...newItem, 
+        id: Date.now().toString(), 
+        name: form.name, 
+        type: 'Painel',
+        material: materialName, 
+        bleedX: bleed.x, 
+        bleedY: bleed.y,
         visibleWidth: vW, 
         visibleHeight: vH, 
         totalWidth: vW + (bleed.x * 2), 
@@ -520,7 +662,12 @@ export default function App() {
       const f = parseMeasure(form.f), s = parseMeasure(form.s), h = parseMeasure(form.h);
       const vW = f + (s * 2);
       newItem = { 
-        ...newItem, 
+        id: Date.now().toString(), 
+        name: form.name, 
+        type: 'Balcão',
+        material: materialName, 
+        bleedX: bleed.x, 
+        bleedY: bleed.y,
         frontWidth: f, 
         sideWidth: s, 
         height: h, 
@@ -542,7 +689,7 @@ export default function App() {
     }));
   };
 
-  const handleDeleteItem = (spaceId, itemId) => setSpaces(prev => prev.map(s => s.id === spaceId ? { ...s, items: s.items.filter(i => i.id !== itemId) } : s));
+  const handleDeleteItem = (spaceId: string, itemId: string): void => setSpaces(prev => prev.map(s => s.id === spaceId ? { ...s, items: s.items.filter(i => i.id !== itemId) } : s));
 
   const inputUI = `w-full bg-[#F4F5F7] border border-transparent focus:border-[#6aaf5b] focus:bg-white focus:ring-4 focus:ring-[#6aaf5b]/10 p-3.5 sm:p-4 outline-none rounded-xl transition-all text-[13px] sm:text-sm font-bold text-[#121211] placeholder-[#8A94A6]`;
   const labelUI = `block text-[10px] sm:text-[11px] font-bold text-[#8A94A6] tracking-widest uppercase mb-1.5 sm:mb-2 ml-1`;
@@ -623,16 +770,17 @@ export default function App() {
           if (page.type === 'intro') return <IntroSheet key={idx} project={project} sheetNumber={currentNum} totalSheets={totalSheetsCount} isWhiteLabel={isWhiteLabel} />;
           if (page.type === 'anatomy') return <AnatomyPage key={idx} project={project} sheetNumber={currentNum} totalSheets={totalSheetsCount} isWhiteLabel={isWhiteLabel} />;
           if (page.type === 'rules') return <SubmissionRulesPage key={idx} project={project} sheetNumber={currentNum} totalSheets={totalSheetsCount} isWhiteLabel={isWhiteLabel} />;
-          if (page.type === 'sector_cover') return <SectorCoverPage key={idx} project={project} space={page.space} sheetNumber={currentNum} totalSheets={totalSheetsCount} isWhiteLabel={isWhiteLabel} />;
+          if (page.type === 'sector_cover' && page.space) return <SectorCoverPage key={idx} project={project} space={page.space} sheetNumber={currentNum} totalSheets={totalSheetsCount} isWhiteLabel={isWhiteLabel} />;
           if (page.type === 'closing') return <ClosingPage key={idx} project={project} sheetNumber={currentNum} totalSheets={totalSheetsCount} isWhiteLabel={isWhiteLabel} />;
-          if (page.type === 'piece_balcao_detail') return <PieceBalcaoDetailPage key={`detail-${page.item.id}`} project={project} space={page.space} item={page.item} sheetNumber={currentNum} totalSheets={totalSheetsCount} isWhiteLabel={isWhiteLabel} />;
+          if (page.type === 'piece_balcao_detail' && page.item && page.space && page.item.type === 'Balcão') return <PieceBalcaoDetailPage key={`detail-${page.item.id}`} project={project} space={page.space} item={page.item as BalcaoItem} sheetNumber={currentNum} totalSheets={totalSheetsCount} isWhiteLabel={isWhiteLabel} />;
 
           if (page.type === 'piece') {
             const { item, space } = page;
-            const tWidth = item.totalWidth || item.width || 0.001;
-            const tHeight = item.totalHeight || item.height || 0.001;
+            if (!item || !space) return null;
+            const tWidth = item.totalWidth || 0.001;
+            const tHeight = item.totalHeight || 0.001;
             const vWidth = item.visibleWidth || 0.001;
-            const vHeight = item.visibleHeight || item.height || 0.001;
+            const vHeight = item.visibleHeight || 0.001;
 
             const { drawW: vW, drawH: vH } = calculateScalePrint(vWidth, vHeight);
             const { drawW: tW, drawH: tH, scale: tScale } = calculateScalePrint(tWidth, tHeight);
@@ -664,12 +812,12 @@ export default function App() {
                         <CADShape width={`${vW}px`} height={`${vH}px`} wLabel={formatM(vWidth)} hLabel={formatM(vHeight)} isDark={false}>
                           {item.type === 'Painel' ? (
                             <div className="w-full h-full bg-white border-[2.5px] border-[#6aaf5b] shadow-sm rounded-sm"></div>
-                          ) : (
+                          ) : item.type === 'Balcão' ? (
                             <div className="w-full h-full bg-white border-[2.5px] border-[#6aaf5b] flex shadow-sm rounded-sm">
                               <div className="border-r border-[#6aaf5b]/30" style={{width: `${(item.sideWidth/vWidth)*100}%`}}></div>
                               <div className="border-r border-[#6aaf5b]/30" style={{width: `${(item.frontWidth/vWidth)*100}%`}}></div>
                             </div>
-                          )}
+                          ) : null}
                         </CADShape>
                       </div>
                     </div>
@@ -745,7 +893,7 @@ export default function App() {
             </div>
             <ul className="space-y-2 sm:space-y-2.5">
               {spaces.map((s, idx) => (
-                <li key={s.id} draggable onDragStart={(e) => setDraggedSpaceIdx(idx)} onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDropSpace(e, idx)} className={`cursor-grab active:cursor-grabbing ${draggedSpaceIdx === idx ? 'opacity-40' : ''}`}>
+                <li key={s.id} draggable onDragStart={(_e) => setDraggedSpaceIdx(idx)} onDragOver={(_e) => {}} onDrop={(e) => onDropSpace(e, idx)} className={`cursor-grab active:cursor-grabbing ${draggedSpaceIdx === idx ? 'opacity-40' : ''}`}>
                   <button onClick={() => { setActiveSpaceId(s.id); setIsMenuOpen(false); }} className={`w-full text-left p-3 sm:p-3.5 rounded-lg sm:rounded-xl flex items-center justify-between transition-all border ${activeSpaceId === s.id ? `border-[#6aaf5b] bg-white shadow-sm` : 'border-transparent hover:bg-white text-[#5A6270]'}`}>
                     <div className="flex items-center gap-2 sm:gap-2.5 overflow-hidden">
                       <GripVertical className={`w-3.5 h-3.5 flex-shrink-0 ${activeSpaceId === s.id ? 'opacity-30' : 'opacity-10'}`} />
@@ -784,7 +932,7 @@ export default function App() {
                         <select 
                           value={form.type} 
                           onChange={e => {
-                            const newType = e.target.value;
+                            const newType = e.target.value as 'Painel' | 'Balcão';
                             setForm({
                               ...form, 
                               type: newType, 
@@ -851,11 +999,11 @@ export default function App() {
               <div className="xl:col-span-5 space-y-4">
                 <div className="flex items-center justify-between px-1"><h3 className={`font-bold text-xs sm:text-sm text-[#121211]`}>Peças neste Setor</h3><span className={`text-[9px] sm:text-[10px] font-bold text-[#8A94A6] bg-[#F4F5F7] px-2.5 py-1 rounded-md`}>{activeSpace?.items.length || 0}</span></div>
                 <div className="space-y-2.5 sm:space-y-3">
-                  {activeSpace?.items.length === 0 ? (
+                  {!activeSpace || activeSpace.items.length === 0 ? (
                     <div className={`p-6 sm:p-8 border border-dashed border-[#E8ECEF] rounded-[20px] sm:rounded-[24px] text-center bg-[#FAFAFA]`}><Layout className={`w-6 h-6 sm:w-8 sm:h-8 mx-auto mb-2 sm:mb-3 text-[#8A94A6] opacity-40`} /><p className={`text-[11px] sm:text-xs font-medium text-[#8A94A6]`}>Nenhuma peça cadastrada.</p></div>
                   ) : (
                     activeSpace.items.map((item, index) => (
-                      <div key={item.id} draggable onDragStart={(e) => setDraggedItemIdx(index)} onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDropItem(e, index)} className={`p-3 sm:p-4 rounded-[12px] sm:rounded-[16px] border border-[#E8ECEF] bg-white shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 transition-all hover:border-[#6aaf5b] cursor-grab active:cursor-grabbing ${draggedItemIdx === index ? 'opacity-40' : ''}`}>
+                      <div key={item.id} draggable onDragStart={(_e) => setDraggedItemIdx(index)} onDragOver={(_e) => {}} onDrop={(e) => onDropItem(e, index)} className={`p-3 sm:p-4 rounded-[12px] sm:rounded-[16px] border border-[#E8ECEF] bg-white shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 transition-all hover:border-[#6aaf5b] cursor-grab active:cursor-grabbing ${draggedItemIdx === index ? 'opacity-40' : ''}`}>
                         <div className="flex items-center gap-2.5 sm:gap-3">
                           <GripVertical className={`w-3.5 h-3.5 text-[#E8ECEF] flex-shrink-0 hidden sm:block`} />
                           <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-md sm:rounded-lg ${item.material === 'Sangria Especial' ? 'bg-[#eab308]/10' : 'bg-[#F4F5F7]'} flex items-center justify-center flex-shrink-0`}>
@@ -870,7 +1018,7 @@ export default function App() {
                           </div>
                         </div>
                         <div className="flex items-center justify-between sm:gap-4 w-full sm:w-auto border-t border-[#E8ECEF] sm:border-0 pt-2 sm:pt-0">
-                          <div className="text-left sm:text-right"><span className={`block text-[7px] sm:text-[8px] font-bold uppercase text-[#8A94A6] mb-0.5`}>Arquivo Final</span><span className={`text-[11px] sm:text-xs font-black text-[#121211]`}>{formatM(item.totalWidth || item.width)} x {formatM(item.totalHeight || item.height)}M</span></div>
+                          <div className="text-left sm:text-right"><span className={`block text-[7px] sm:text-[8px] font-bold uppercase text-[#8A94A6] mb-0.5`}>Arquivo Final</span><span className={`text-[11px] sm:text-xs font-black text-[#121211]`}>{formatM(item.totalWidth)} x {formatM(item.totalHeight)}M</span></div>
                           <button onClick={() => handleDeleteItem(activeSpace.id, item.id)} className={`p-1.5 sm:p-2 bg-[#FFF0F0] text-red-500 rounded-md sm:rounded-lg hover:bg-red-500 hover:text-white transition-colors`}><Trash2 className="w-3.5 h-3.5" /></button>
                         </div>
                       </div>
